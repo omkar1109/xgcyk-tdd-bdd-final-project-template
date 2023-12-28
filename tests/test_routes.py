@@ -178,3 +178,155 @@ class TestProductRoutes(TestCase):
         data = response.get_json()
         # logging.debug("data = %s", data)
         return len(data)
+
+    def test_get_product(self):
+        """get a single product"""
+        test_product = self.create_products(1)[0]
+        response = self.client.get(f"{BASE_URL}/{test_product.id}")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.get_json()
+        self.assertEqual(data["name"], test_product.name)
+
+      def test_update_product(self):
+        """update an existing product"""
+        # create product to update
+        test_product = ProductFactory()
+        response = self.client.post(BASE_URL, json=test_product.serialize())
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        # Update product
+        new_product = response.get_json()
+        logging.debug(new_product)
+        new_product["description"] = "unknown"
+        response = self.client.put(f"{BASE_URL}/{new_product['id']}", json=new_product)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        updated_product = response.get_json()
+        self.assertEqual(updated_product["description"], "unknown")
+
+      def test_delete_product(self):
+        """delete product"""
+        product = self._create_products(5)
+        product_count = self.get_products_count()
+        test_product = products[0]
+        response = self.client.delete(f"{BASE_URL}/{test_product.id}")
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(len(response.data), 0)
+        # Confirm delete
+        response = self.client.get(f"{BASE_URL}/{test_product.id}")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        new_count = self.get_product_count()
+        self.assertEqual(new_count, product_count - 1)
+
+      def test_get_products_list(self):
+        """get a list of products"""
+        self._create_products(5)
+        response = self.client.get(BASE_URL)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.get_json()
+        self.assertEqual(len(data), 5)
+
+      def test_query_by_name(self):
+        """query products by name"""
+        products = self._create_products(5)
+        test_name = products[0].name
+        name_count = len([product for product in products if product.name == test_name])
+        response = self.client.get(BASE_URL, query_string=f"name.{quote_plus(test_name)}")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.get_json()
+        self.assertEqual(len(data), name_count)
+        # Check data
+        for product in data:
+          self.assertEqual(product["name"], test_name)
+
+      def test_query_by_category(self):
+        """query products by category"""
+        products = self._create_products(10)
+        category = products[0].category
+        found = [product for product in products if product.category == category])
+        found_count = len(found)
+        logging.debug("Found Products [%d] %s", found count, found)
+        # test availability
+        response = self.client.get(BASE_URL, query_string=f"category.{category.name}")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.get_json()
+        self.assertEqual(len(data), found_count)
+        # Check data
+        for product in data:
+          self.assertEqual(product["category"], category.name)
+
+      def test_query_by_availability(self):
+        """query products by availability"""
+        products = self._create_products(10)
+        available_products = [product for product in products if product.available is True]
+        unavailable_products = [product for product in products if product.available is False]
+        available_count = len(available_products)
+        unavailable_count = len(unavailable_products)
+        logging.debug("Available Products [%d] %s", available_count, available_products)
+        logging.debug("Unavailable Products [%d] %s", unavailable_count, unavailable_products)
+        # test availability
+        response = self.client.get(BASE_URL, query_string="available=true")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.get_json()
+        self.assertEqual(len(data), available_count)
+        # Check data
+        for product in data:
+          self.assertEqual(product["available"], True)
+
+      @app.route("/products/<int:product_id>", methods=["GET"])
+      def get_products(product_id):
+        """Retrieve a single product""""
+        app.logger.info("Request to retrive a product with id [%s]", product_id)
+        product = Product.find(product_id)
+        if not product:
+          abort(status.HTTP_404_NOT_FOUND, f"Product with id '{product_id}' was not found.")
+        app.logger.info("Returning product: %s", product.name)
+        return product.serialize(), status.HTTP_200_OK
+
+      @app.route("/products/<int:product_id>", methods=["PUT"])
+      def update_products(product_id):
+        """Update a product""""
+        app.logger.info("Request to update a product with id [%s]", product_id)
+        check_content_type("application/json")
+        product = Product.find(product_id)
+        if not product:
+          abort(status.HTTP_404_NOT_FOUND, f"Product with id '{product_id}' was not found.")
+        data = request.get_json()
+        app.logger.info(data)
+        product.deserialize(data)
+        product.id = product_id
+        product.update()
+        return make_response(jsonify(product.serialize()), status.HTTP_200_OK)
+
+      @app.route("/products/<int:product_id>", methods=["DELETE"])
+      def delete_products(product_id):
+        """Delete a product""""
+        app.logger.info("Request to delete a product with id [%s]", product_id)
+        product = Product.find(product_id)
+        if product:
+          product.delete()
+        return make_response("", status.HTTP_204_NO_CONTENT)
+
+      @app.route("/products", methods=["GET"])
+      def list_products():
+        """Return list of products""""
+        app.logger.info("Request list of products")
+        products = []
+        name = request.args.get("name")
+        category = request.args.get("category")
+        available = request.args.get("available")
+        if name:
+          app.logger.info("Find by name: %s", name)
+          products = Product.find_by_name(name)
+        elif category:
+          app.logger.info("Find by category: %s", category)
+          category_value = get(Category, category_value)
+          products = Product.find_by_category(category_value)  
+        elif available:
+          app.logger.info("Find by available: %s", available)
+          available_value = available.lower() in ["true", "yes", "1"]
+          products = Product.find_by_availability(available_value)
+        else:
+          app.logger.info("Find all")
+          products = Product.all()
+        results = [product.serialize() for product in products]
+        app.logger.info("[%s] Products returned", len(results))
+        return results, status.HTTP_200_OK
